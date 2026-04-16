@@ -1,8 +1,19 @@
 //---------------------------------------------------------------------------
 
 #include <vcl.h>
+#include <onnxruntime_cxx_api.h>
 #pragma hdrstop
 //---------------------------------------------------------------------------
+extern "C" void test_onnx_link(void)
+{
+	try {
+		const char *version = OrtGetApiBase()->GetVersionString();
+		ShowMessage("ONNX Runtime caricato correttamente! Versione: " + String(version));
+	}
+	catch (...) {
+		ShowMessage("Errore critico nel caricamento di ONNX Runtime!");
+	}
+}
 
 USEFORM("..\appcmn\refdlg.cpp", RefDialog);
 USEFORM("..\appcmn\timedlg.cpp", TimeDialog);
@@ -22,6 +33,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 	try
 	{
 		Application->Initialize();
+		test_onnx_link();
 		Application->Title = "RTKPOST";
 		Application->CreateForm(__classid(TMainForm), &MainForm);
 		Application->CreateForm(__classid(TOptDialog), &OptDialog);

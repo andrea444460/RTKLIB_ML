@@ -1,4 +1,4 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{E5CEB647-183C-40E4-9031-38756E3D2A91}</ProjectGuid>
         <ProjectType>CppVCLApplication</ProjectType>
@@ -85,8 +85,8 @@
         <ILINK_LinkwithRegEx>false</ILINK_LinkwithRegEx>
         <ILINK_LinkwithIntebaseTogo>false</ILINK_LinkwithIntebaseTogo>
         <SanitizedProjectName>rtkpost</SanitizedProjectName>
-        <IncludePath>..\..\..\src\;..\appcmn\;$(IncludePath)</IncludePath>
-        <ILINK_LibraryPath>..\..\..\src\;..\appcmn\;..\..\..\lib\openblas;$(ILINK_LibraryPath)</ILINK_LibraryPath>
+        <IncludePath>..\..\..\src\;..\appcmn\;..\..\..\lib\onnxruntime-win-x64-1.24.4\include\;$(IncludePath)</IncludePath>
+        <ILINK_LibraryPath>..\..\..\src\;..\appcmn\;..\..\..\lib\openblas\;..\..\..\lib\onnxruntime-win-x64-1.24.4\lib\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
         <BCC_waus>false</BCC_waus>
         <BCC_weff>false</BCC_weff>
         <Manifest_File>None</Manifest_File>
@@ -110,7 +110,7 @@
         <DCC_UnitSearchPath>..\..\..\rtklib_extlex;..\..\extlex;..\..\extion;..\..\src\qzsext;..\appcmn;..\..\src\rcv;..\src;..\..\src;K:\proj\rtklib_1.1\util\gui;C:\Documents and Settings\TTAKA\My Documents\Borland Studio Projects;$(BDS)\lib;$(BDS)\lib\obj;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <DCC_ResourcePath>..\..\..\rtklib_extlex;..\..\extlex;..\..\extion;..\..\src\qzsext;..\appcmn;..\..\src\rcv;..\src;..\..\src;K:\proj\rtklib_1.1\util\gui;$(DCC_ResourcePath)</DCC_ResourcePath>
         <DCC_CBuilderOutput>JPHNE</DCC_CBuilderOutput>
-        <BCC_Defines>WIN32;TRACE;ENAGLO;ENAGAL;ENAQZS;ENACMP;ENAIRN;NFREQ=4;NEXOBS=3;$(BCC_Defines)</BCC_Defines>
+        <BCC_Defines>WIN32;TRACE;ENAGLO;ENAGAL;ENAQZS;ENACMP;ENAIRN;NFREQ=4;NEXOBS=3;NLOS_ONNX_RUNTIME;$(BCC_Defines)</BCC_Defines>
         <UWP_CppLogo44>$(BDS)\bin\Artwork\Windows\UWP\cppreg_UwpDefault_44.png</UWP_CppLogo44>
         <UWP_CppLogo150>$(BDS)\bin\Artwork\Windows\UWP\cppreg_UwpDefault_150.png</UWP_CppLogo150>
         <ILINK_LinkwithPThread>false</ILINK_LinkwithPThread>
@@ -310,6 +310,10 @@
             <BuildOrder>40</BuildOrder>
             <IgnorePath>true</IgnorePath>
         </LibFiles>
+        <LibFiles Include="..\..\..\lib\onnxruntime-win-x64-1.24.4\lib\onnxruntime_bcc.a" Condition="'$(Platform)'=='Win64'">
+            <BuildOrder>41</BuildOrder>
+            <IgnorePath>true</IgnorePath>
+        </LibFiles>
         <CppCompile Include="..\..\..\src\convgpx.c">
             <BuildOrder>15</BuildOrder>
         </CppCompile>
@@ -371,6 +375,9 @@
             <BuildOrder>36</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\src\rtkpos.c">
+            <BuildOrder>37</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\src\nlos_ml.c">
             <BuildOrder>37</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\src\sbas.c">
@@ -576,6 +583,18 @@
                 </DeployFile>
                 <DeployFile Condition="'$(DynamicRTL)'=='true' And '$(Multithreaded)'=='true'" LocalName="$(BDS)\bin\cc32c290mt.dll" Class="DependencyModule">
                     <Platform Name="Win32">
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="..\..\..\lib\onnxruntime-win-x64-1.24.4\lib\onnxruntime.dll" Class="DependencyModule">
+                    <Platform Name="Win64">
+                        <RemoteDir>.\</RemoteDir>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="..\..\..\lib\onnxruntime-win-x64-1.24.4\lib\onnxruntime_providers_shared.dll" Class="DependencyModule">
+                    <Platform Name="Win64">
+                        <RemoteDir>.\</RemoteDir>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>

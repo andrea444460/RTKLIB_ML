@@ -211,6 +211,13 @@ __published:
 	TCheckBox *PosOpt6;
 	TLabel *Label23;
 	TEdit *PPPOpts;
+    TCheckBox *NlosOnnxEnable;
+    TEdit *NlosOnnxModel;
+    TButton *BtnNlosOnnxModel;
+    TLabel *LabelNlosDeweightGain;
+    TEdit *NlosDeweightGain;
+    TLabel *LabelNlosArThreshold;
+    TEdit *NlosArThreshold;
 	TCheckBox *NavSys7;
 	TComboBox *OutputSingle;
 	TEdit *MaxSolStd;
@@ -290,6 +297,7 @@ __published:
 	void __fastcall BtnSnrMaskClick(TObject *Sender);
 	void __fastcall NavSys6Click(TObject *Sender);
 	void __fastcall BtnFreqClick(TObject *Sender);
+	void __fastcall BtnNlosOnnxModelClick(TObject *Sender);
 
 private:
 	snrmask_t SnrMask;

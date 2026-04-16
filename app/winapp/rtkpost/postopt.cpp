@@ -246,6 +246,15 @@ void __fastcall TOptDialog::BtnIonoFileClick(TObject *Sender)
 	IonoFile->Text=OpenDialog->FileName;
 }
 //---------------------------------------------------------------------------
+void __fastcall TOptDialog::BtnNlosOnnxModelClick(TObject *Sender)
+{
+	OpenDialog->Title="ONNX Model File";
+	OpenDialog->Filter="ONNX Model (*.onnx)|*.onnx|All (*.*)|*.*";
+	OpenDialog->FilterIndex=1;
+	if (!OpenDialog->Execute()) return;
+	NlosOnnxModel->Text=OpenDialog->FileName;
+}
+//---------------------------------------------------------------------------
 void __fastcall TOptDialog::FreqChange(TObject *Sender)
 {
 	UpdateEnable();
@@ -456,6 +465,10 @@ void __fastcall TOptDialog::GetOpt(void)
 	RnxOpts1	 ->Text			=MainForm->RnxOpts1;
 	RnxOpts2	 ->Text			=MainForm->RnxOpts2;
 	PPPOpts		 ->Text			=MainForm->PPPOpts;
+	NlosOnnxEnable->Checked		=MainForm->NlosOnnxEnabled;
+	NlosOnnxModel ->Text			=MainForm->NlosOnnxModel;
+	NlosDeweightGain->Text       =s.sprintf("%.3f",MainForm->NlosDeweightGain);
+	NlosArThreshold ->Text       =s.sprintf("%.3f",MainForm->NlosArThreshold);
 	
 	IntpRefObs	 ->ItemIndex	=MainForm->IntpRefObs;
 	SbasSat		 ->Text			=s.sprintf("%d",MainForm->SbasSat);
@@ -590,6 +603,10 @@ void __fastcall TOptDialog::SetOpt(void)
 	MainForm->RnxOpts1	  =RnxOpts1		->Text;
 	MainForm->RnxOpts2	  =RnxOpts2		->Text;
 	MainForm->PPPOpts	  =PPPOpts		->Text;
+	MainForm->NlosOnnxEnabled=NlosOnnxEnable->Checked?1:0;
+	MainForm->NlosOnnxModel =NlosOnnxModel->Text;
+	MainForm->NlosDeweightGain=str2dbl(NlosDeweightGain->Text);
+	MainForm->NlosArThreshold =str2dbl(NlosArThreshold->Text);
 	
 	MainForm->IntpRefObs  =IntpRefObs	->ItemIndex;
 	MainForm->SbasSat     =SbasSat		->Text.ToInt();
@@ -742,6 +759,12 @@ void __fastcall TOptDialog::LoadOpt(AnsiString file)
 	RnxOpts1	 ->Text			=prcopt.rnxopt[0];
 	RnxOpts2	 ->Text			=prcopt.rnxopt[1];
 	PPPOpts		 ->Text			=prcopt.pppopt;
+	NlosOnnxEnable->Checked		=prcopt.nlos_onnx_enabled?true:false;
+	NlosOnnxModel ->Text			=prcopt.nlos_onnx_model;
+	MainForm->NlosDeweightGain	=prcopt.nlos_deweight_gain;
+	MainForm->NlosArThreshold	=prcopt.nlos_ar_threshold;
+	NlosDeweightGain->Text       =s.sprintf("%.3f",prcopt.nlos_deweight_gain);
+	NlosArThreshold ->Text       =s.sprintf("%.3f",prcopt.nlos_ar_threshold);
 	
 	IntpRefObs	 ->ItemIndex	=prcopt.intpref;
 	SbasSat		 ->Text			=s.sprintf("%d",prcopt.sbassatsel);
@@ -914,6 +937,12 @@ int ppp=PosMode->ItemIndex>=PMODE_PPP_KINEMA;
 	strcpy(prcopt.rnxopt[0],RnxOpts1_Text.c_str());
 	strcpy(prcopt.rnxopt[1],RnxOpts2_Text.c_str());
 	strcpy(prcopt.pppopt,PPPOpts_Text.c_str());
+	prcopt.nlos_onnx_enabled=NlosOnnxEnable->Checked?1:0;
+	AnsiString NlosOnnxModel_Text=NlosOnnxModel->Text;
+	strncpy(prcopt.nlos_onnx_model,NlosOnnxModel_Text.c_str(),MAXSTRPATH-1);
+	prcopt.nlos_onnx_model[MAXSTRPATH-1]='\0';
+	prcopt.nlos_deweight_gain=MainForm->NlosDeweightGain;
+	prcopt.nlos_ar_threshold=MainForm->NlosArThreshold;
 	
 	strcpy(filopt.satantp,SatPcvFile_Text.c_str());
 	strcpy(filopt.rcvantp,AntPcvFile_Text.c_str());
@@ -1022,6 +1051,12 @@ void __fastcall TOptDialog::UpdateEnable(void)
 	RefPos2        ->Enabled=RefPosType->Enabled&&RefPosType->ItemIndex<=2;
 	RefPos3        ->Enabled=RefPosType->Enabled&&RefPosType->ItemIndex<=2;
 	BtnRefPos      ->Enabled=RefPosType->Enabled&&RefPosType->ItemIndex<=2;
+	NlosOnnxModel  ->Enabled=NlosOnnxEnable->Checked;
+	BtnNlosOnnxModel->Enabled=NlosOnnxEnable->Checked;
+	NlosDeweightGain->Enabled=NlosOnnxEnable->Checked;
+	NlosArThreshold->Enabled=NlosOnnxEnable->Checked;
+	LabelNlosDeweightGain->Enabled=NlosOnnxEnable->Checked;
+	LabelNlosArThreshold->Enabled=NlosOnnxEnable->Checked;
 }
 //---------------------------------------------------------------------------
 void __fastcall TOptDialog::GetPos(int type, TEdit **edit, double *pos)

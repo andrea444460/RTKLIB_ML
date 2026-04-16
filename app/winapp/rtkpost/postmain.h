@@ -222,8 +222,11 @@ public:
 	int SolFormat,TimeFormat,LatLonFormat,IntpRefObs,NetRSCorr,SatClkCorr;
 	int SbasCorr,SbasCorr1,SbasCorr2,SbasCorr3,SbasCorr4,TimeDecimal;
 	int SolStatic,SbasSat,MapFunc;
+	int NlosOnnxEnabled;
 	int PosOpt[6];
 	double ElMask,MaxAgeDiff,VarHoldAmb,GainHoldAmb,RejectCode,RejectPhase;
+	double NlosDeweightGain;
+	double NlosArThreshold;
 	double MeasErrR1,MeasErrR2,MeasErrR5,MeasErrR6;
     double MeasErr2,MeasErr3,MeasErr4,MeasErr5,MeasErr6,MeasErr7,MeasErr8;
 	double SatClkStab,RovAntE,RovAntN,RovAntU,RefAntE,RefAntN,RefAntU;
@@ -240,6 +243,7 @@ public:
 	AnsiString GeoidDataFile,IonoFile,DCBFile,EOPFile,BLQFile;
 	AnsiString SbasCorrFile,SatPcvFile,ExSats;
 	AnsiString RovList,BaseList;
+	AnsiString NlosOnnxModel;
 	
 	void __fastcall ViewFile(AnsiString file);
 	void __fastcall ShowMsg(char *msg);

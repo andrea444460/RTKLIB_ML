@@ -49,6 +49,7 @@
 *-----------------------------------------------------------------------------*/
 #include <stdarg.h>
 #include "rtklib.h"
+#include "nlos_ml.h"
 
 /* algorithm configuration -------------------------------------------------- */
 #define STD_PREC_VAR_THRESH 0  /* pos variance threshold to skip standard precision */
@@ -62,6 +63,102 @@
 #define MIN(x,y)    ((x)<=(y)?(x):(y))
 #define MAX(x,y)    ((x)>=(y)?(x):(y))
 #define ROUND(x)    (int)floor((x)+0.5)
+
+/* NLOS ML integration ----------------------------------------------------- */
+#define NLOS_VAR_EPS        1e-6
+
+static int nlos_receiver_state(const obsd_t *obs)
+{
+    int m_phase_l1, m_code_l2, m_phase_l2, raw_malus, receiver_state;
+    if (!obs) return 0;
+
+    m_phase_l1 = (obs->L[0] <= 0.0) ? 1 : 0;
+    /* Treat unavailable L2 observables as missing, per model specification. */
+    m_code_l2  = (obs->P[1] <= 1e6) ? 1 : 0;
+    m_phase_l2 = (obs->L[1] <= 0.0) ? 1 : 0;
+
+    raw_malus = m_phase_l1 * 4 + m_code_l2 * 2 + m_phase_l2;
+    receiver_state = 7 - raw_malus;
+    if (receiver_state < 0) receiver_state = 0;
+    if (receiver_state > 7) receiver_state = 7;
+    return receiver_state;
+}
+
+static void nlos_hist_push_phase(ssat_t *ssat, int frq, double resid)
+{
+    const uint8_t k = NLOS_HIST_LEN;
+    uint8_t cnt = ssat->resc_hist_count[frq];
+    uint8_t pos = ssat->resc_hist_pos[frq];
+
+    if (cnt < k) {
+        ssat->resc_hist[frq][pos] = (float)resid;
+        ssat->resc_sum[frq] += resid;
+        ssat->resc_sumsq[frq] += resid * resid;
+        ssat->resc_hist_count[frq] = cnt + 1;
+        ssat->resc_hist_pos[frq] = (uint8_t)((pos + 1) % k);
+        return;
+    }
+
+    /* overwrite oldest sample */
+    const double old = (double)ssat->resc_hist[frq][pos];
+    ssat->resc_sum[frq] -= old;
+    ssat->resc_sumsq[frq] -= old * old;
+
+    ssat->resc_hist[frq][pos] = (float)resid;
+    ssat->resc_sum[frq] += resid;
+    ssat->resc_sumsq[frq] += resid * resid;
+    ssat->resc_hist_pos[frq] = (uint8_t)((pos + 1) % k);
+}
+
+static void nlos_hist_push_code(ssat_t *ssat, int frq, double resid)
+{
+    const uint8_t k = NLOS_HIST_LEN;
+    uint8_t cnt = ssat->resp_hist_count[frq];
+    uint8_t pos = ssat->resp_hist_pos[frq];
+
+    if (cnt < k) {
+        ssat->resp_hist[frq][pos] = (float)resid;
+        ssat->resp_sum[frq] += resid;
+        ssat->resp_sumsq[frq] += resid * resid;
+        ssat->resp_hist_count[frq] = cnt + 1;
+        ssat->resp_hist_pos[frq] = (uint8_t)((pos + 1) % k);
+        return;
+    }
+
+    /* overwrite oldest sample */
+    const double old = (double)ssat->resp_hist[frq][pos];
+    ssat->resp_sum[frq] -= old;
+    ssat->resp_sumsq[frq] -= old * old;
+
+    ssat->resp_hist[frq][pos] = (float)resid;
+    ssat->resp_sum[frq] += resid;
+    ssat->resp_sumsq[frq] += resid * resid;
+    ssat->resp_hist_pos[frq] = (uint8_t)((pos + 1) % k);
+}
+
+static void nlos_update_residual_history(rtk_t *rtk, const double *v, const int *vflg, int nv)
+{
+    (void)rtk;
+
+    for (int k = 0; k < nv; k++) {
+        const int sat1 = (vflg[k] >> 16) & 0xFF;
+        const int sat2 = (vflg[k] >> 8) & 0xFF;
+        const int type = (vflg[k] >> 4) & 0xF; /* 0=L(phase), 1=P(code) */
+        const int frq = vflg[k] & 0xF;
+        const double resid = v[k];
+
+        if (sat1 < 1 || sat2 < 1 || sat1 > MAXSAT || sat2 > MAXSAT || frq >= NFREQ) continue;
+
+        if (type == 0) { /* phase */
+            nlos_hist_push_phase(&rtk->ssat[sat1 - 1], frq, resid);
+            nlos_hist_push_phase(&rtk->ssat[sat2 - 1], frq, resid);
+        }
+        else if (type == 1) { /* code */
+            nlos_hist_push_code(&rtk->ssat[sat1 - 1], frq, resid);
+            nlos_hist_push_code(&rtk->ssat[sat2 - 1], frq, resid);
+        }
+    }
+}
 
 #define VAR_POS     SQR(30.0) /* initial variance of receiver pos (m^2) */
 #define VAR_POS_FIX SQR(1e-4) /* initial variance of fixed receiver pos (m^2) */
@@ -1217,6 +1314,12 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
                  int ns, double *v, double *H, double *R, int *vflg)
 {
     prcopt_t *opt=&rtk->opt;
+    const double nlos_gain = opt->nlos_deweight_gain < 0.0 ? 0.0 : opt->nlos_deweight_gain;
+    const double nlos_ar_threshold =
+        opt->nlos_ar_threshold < 0.0 ? 0.0 :
+        (opt->nlos_ar_threshold > 1.0 ? 1.0 : opt->nlos_ar_threshold);
+    double nlos_epoch_max[MAXSAT] = {0};
+    uint8_t nlos_epoch_seen[MAXSAT] = {0};
     double bl,dr[3],posu[3],posr[3],didxi=0.0,didxj=0.0,*im;
     double *tropr,*tropu,*dtdxr,*dtdxu,*Ri,*Rj,freqi,freqj,*Hi=NULL,df;
     int i,j,k,m,f,nv=0,nb[NFREQ*NSYS*2+2]={0},b=0,sysi,sysj,nf=NF(opt);
@@ -1390,6 +1493,76 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
                                 rtk->ssat[sat[j]-1].snr_rover[frq],
                                 rtk->ssat[sat[j]-1].snr_base[frq],
                                 bl,dt,f,opt,&obs[iu[j]]);
+
+                /* keep az/el in ssat for ML features + AR gating */
+                rtk->ssat[sat[i]-1].azel[0] = azel[iu[i]*2];
+                rtk->ssat[sat[i]-1].azel[1] = azel[1+iu[i]*2];
+                rtk->ssat[sat[j]-1].azel[0] = azel[iu[j]*2];
+                rtk->ssat[sat[j]-1].azel[1] = azel[1+iu[j]*2];
+
+                /* NLOS ML de-weighting (apply before ddcov/R build) */
+                nlos_features_t fi, fj;
+                const double snr_i = rtk->ssat[sat[i]-1].snr_rover[frq];
+                const double snr_j = rtk->ssat[sat[j]-1].snr_rover[frq];
+                const int rs_i = nlos_receiver_state(&obs[iu[i]]);
+                const int rs_j = nlos_receiver_state(&obs[iu[j]]);
+
+                fi.sat_no = sat[i];
+                fi.freq_idx = frq;
+                fi.epoch = rtk->epoch;
+                fi.snr_dbhz = snr_i;
+                fi.receiver_state = rs_i;
+
+                fj.sat_no = sat[j];
+                fj.freq_idx = frq;
+                fj.epoch = rtk->epoch;
+                fj.snr_dbhz = snr_j;
+                fj.receiver_state = rs_j;
+
+                trace(2, "NLOS-ONNX in: sat=%d f=%d snr=%.3f rs=%d\n",
+                      sat[i], frq + 1, fi.snr_dbhz, fi.receiver_state);
+                trace(2, "NLOS-ONNX in: sat=%d f=%d snr=%.3f rs=%d\n",
+                      sat[j], frq + 1, fj.snr_dbhz, fj.receiver_state);
+
+                double pi = getNlosProbability(&fi);
+                double pj = getNlosProbability(&fj);
+                if (!nlos_epoch_seen[sat[i]-1] || pi > nlos_epoch_max[sat[i]-1]) {
+                    nlos_epoch_seen[sat[i]-1] = 1;
+                    nlos_epoch_max[sat[i]-1] = pi;
+                }
+                if (!nlos_epoch_seen[sat[j]-1] || pj > nlos_epoch_max[sat[j]-1]) {
+                    nlos_epoch_seen[sat[j]-1] = 1;
+                    nlos_epoch_max[sat[j]-1] = pj;
+                }
+                trace(2, "NLOS-ONNX p: sat=%d f=%d type=%s P=%.6f\n",
+                      sat[i], frq + 1, code ? "code" : "phase", pi);
+                trace(2, "NLOS-ONNX p: sat=%d f=%d type=%s P=%.6f\n",
+                      sat[j], frq + 1, code ? "code" : "phase", pj);
+
+                {
+                    const double scale_i = pow(1.0 - pi + NLOS_VAR_EPS, nlos_gain);
+                    const double scale_j = pow(1.0 - pj + NLOS_VAR_EPS, nlos_gain);
+                    Ri[nv] = Ri[nv] / scale_i;
+                    Rj[nv] = Rj[nv] / scale_j;
+                    trace(2, "NLOS-ONNX scale: sat=%d f=%d gain=%.3f scale=%.6f\n",
+                          sat[i], frq + 1, nlos_gain, 1.0 / scale_i);
+                    trace(2, "NLOS-ONNX scale: sat=%d f=%d gain=%.3f scale=%.6f\n",
+                          sat[j], frq + 1, nlos_gain, 1.0 / scale_j);
+                }
+
+                /* Gate integer ambiguity resolution for phase if strongly NLOS. */
+                if (!code) {
+                    if (pi > nlos_ar_threshold) {
+                        rtk->ssat[sat[i]-1].nlos_ar[frq] = 1;
+                        trace(2, "NLOS-ONNX gate: sat=%d f=%d P=%.3f thr=%.3f\n",
+                              sat[i], frq + 1, pi, nlos_ar_threshold);
+                    }
+                    if (pj > nlos_ar_threshold) {
+                        rtk->ssat[sat[j]-1].nlos_ar[frq] = 1;
+                        trace(2, "NLOS-ONNX gate: sat=%d f=%d P=%.3f thr=%.3f\n",
+                              sat[j], frq + 1, pj, nlos_ar_threshold);
+                    }
+                }
                 /* increase variance if half cycle flags set */
                 if (!code&&(obs[iu[i]].LLI[frq]&LLI_HALFC)) Ri[nv]+=0.01;
                 if (!code&&(obs[iu[j]].LLI[frq]&LLI_HALFC)) Rj[nv]+=0.01;
@@ -1437,6 +1610,17 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
 
     /* double-differenced measurement error covariance */
     ddcov(nb,b,Ri,Rj,nv,R);
+
+    {
+        char tstr[64];
+        const char dir = rtk->tt < 0.0 ? 'B' : 'F';
+        time2str(rtk->sol.time, tstr, 3);
+        for (i = 0; i < MAXSAT; ++i) {
+            if (!nlos_epoch_seen[i]) continue;
+            trace(1, "NLOS-ONNX epochsat: epoch=%d dir=%c time=%s sat=%d P=%.6f\n",
+                  rtk->epoch, dir, tstr, i + 1, nlos_epoch_max[i]);
+        }
+    }
 
     free(Ri); free(Rj); free(im);
     free(tropu); free(tropr); free(dtdxu); free(dtdxr);
@@ -1531,7 +1715,7 @@ static int ddidx(rtk_t *rtk, int *ix, int gps, int glo, int sbs)
                 }
                 /* set sat to use for fixing ambiguity if meets criteria */
                 if (rtk->ssat[i-k].lock[f]>=0&&!(rtk->ssat[i-k].slip[f]&LLI_HALFC)&&
-                    rtk->ssat[i-k].azel[1]>=rtk->opt.elmaskar&&!nofix) {
+                    rtk->ssat[i-k].azel[1]>=rtk->opt.elmaskar&&!rtk->ssat[i-k].nlos_ar[f]&&!nofix) {
                     rtk->ssat[i-k].fix[f]=2; /* fix */
                     break;/* break out of loop if find good sat */
                 }
@@ -1548,7 +1732,7 @@ static int ddidx(rtk_t *rtk, int *ix, int gps, int glo, int sbs)
                 if (sbs==0 && satsys(j-k+1,NULL)==SYS_SBS) continue;
                 if (rtk->ssat[j-k].lock[f]>=0&&!(rtk->ssat[j-k].slip[f]&LLI_HALFC)&&
                     rtk->ssat[j-k].vsat[f]&&
-                    rtk->ssat[j-k].azel[1]>=rtk->opt.elmaskar&&!nofix) {
+                    rtk->ssat[j-k].azel[1]>=rtk->opt.elmaskar&&!rtk->ssat[j-k].nlos_ar[f]&&!nofix) {
                     /* set D coeffs to subtract sat j from sat i */
                     ix[nb*2  ]=i; /* state index of ref bias */
                     ix[nb*2+1]=j; /* state index of target bias */
@@ -2001,6 +2185,7 @@ static int relpos(rtk_t *rtk, const obsd_t *obs, int nu, int nr,
             rtk->ssat[i].vsat[j]=0;  /* valid satellite */
                 rtk->ssat[i].snr_rover[j]=0;
                 rtk->ssat[i].snr_base[j] =0;
+                rtk->ssat[i].nlos_ar[j]=0;
         }
     }
     /* compute satellite positions, velocities and clocks for base and rover */
@@ -2130,7 +2315,13 @@ static int relpos(rtk_t *rtk, const obsd_t *obs, int nu, int nr,
                 if (f==0) rtk->sol.ns++; /* valid satellite count by L1 */
             }
             /* too few valid phases */
-            if (rtk->sol.ns<4) stat=SOLQ_DGPS;
+            if (rtk->sol.ns<4) {
+                stat=SOLQ_DGPS;
+            }
+            else {
+                /* Update NLOS residual std-dev features at epoch end (Float only). */
+                nlos_update_residual_history(rtk, v, vflg, nv);
+            }
         }
         else stat=SOLQ_NONE;
     }
@@ -2208,6 +2399,12 @@ static int relpos(rtk_t *rtk, const obsd_t *obs, int nu, int nr,
         rtk->nfix=0;
     }
     trace(3,"sol_rr= ");tracemat(3,rtk->sol.rr,1,6,15,3);
+
+    /* End-of-epoch update for NLOS delta-SNR feature (Float/Fixed agnostic). */
+    for (i=0;i<ns;i++) for (f=0;f<nf;f++) {
+        rtk->ssat[sat[i]-1].snr_old[f] = rtk->ssat[sat[i]-1].snr_rover[f];
+    }
+
     /* save phase measurements */
     for (i=0;i<n;i++) for (j=0;j<nf;j++) {
         if (obs[i].L[j]==0.0) continue;
@@ -2265,6 +2462,11 @@ extern void rtkinit(rtk_t *rtk, const prcopt_t *opt)
     rtk->nb_ar=0;
     for (i=0;i<MAXERRMSG;i++) rtk->errbuf[i]=0;
     rtk->opt=*opt;
+    /* Optional NLOS ML model (ONNX Runtime) initialization. */
+    if (opt->nlos_onnx_enabled && !nlos_ml_onnx_init(opt)) {
+        trace(1, "NLOS-ONNX disabled at runtime: init failed (model=%s)\n",
+              opt->nlos_onnx_model);
+    }
     rtk->initial_mode=rtk->opt.mode;
     rtk->sol.thres=(float)opt->thresar[0];
     rtk->intpres_nb=0;
@@ -2283,6 +2485,9 @@ extern void rtkfree(rtk_t *rtk)
     free(rtk->P ); rtk->P =NULL;
     free(rtk->xa); rtk->xa=NULL;
     free(rtk->Pa); rtk->Pa=NULL;
+
+    /* Optional NLOS ML model shutdown. */
+    nlos_ml_onnx_shutdown();
 }
 /* precise positioning ---------------------------------------------------------
 * input observation data and navigation message, compute rover position by

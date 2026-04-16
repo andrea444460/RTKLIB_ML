@@ -116,6 +116,9 @@ __fastcall TMainForm::TMainForm(TComponent* Owner)
     IniFile=file;
     
     DynamicModel=IonoOpt=TropOpt=RovAntPcv=RefAntPcv=AmbRes=0;
+    NlosOnnxEnabled=0;
+    NlosDeweightGain=1.0;
+    NlosArThreshold=0.8;
     RovPosType=RefPosType=0;
     OutCntResetAmb=5; LockCntFixAmb=5; FixCntHoldAmb=10;
     MaxAgeDiff=30.0; RejectPhase=30.0; RejectCode=30.0;
@@ -125,6 +128,7 @@ __fastcall TMainForm::TMainForm(TComponent* Owner)
     RovAntE=RovAntN=RovAntU=RefAntE=RefAntN=RefAntU=0.0;
     for (i=0;i<3;i++) RovPos[i]=0.0;
     for (i=0;i<3;i++) RefPos[i]=0.0;
+    NlosOnnxModel="";
     
     DoubleBuffered=true;
 }
@@ -1038,6 +1042,11 @@ int __fastcall TMainForm::GetOption(prcopt_t &prcopt, solopt_t &solopt,
     prcopt.elmaskhold=ElMaskHold*D2R;
     prcopt.thresslip=SlipThres;
     prcopt.thresdop=DopThres;
+    prcopt.nlos_onnx_enabled=NlosOnnxEnabled;
+    strncpy(prcopt.nlos_onnx_model,NlosOnnxModel.c_str(),MAXSTRPATH-1);
+    prcopt.nlos_onnx_model[MAXSTRPATH-1]='\0';
+    prcopt.nlos_deweight_gain=NlosDeweightGain;
+    prcopt.nlos_ar_threshold=NlosArThreshold;
     prcopt.maxtdiff =MaxAgeDiff;
     prcopt.maxinno[1]=RejectCode;
     prcopt.maxinno[0]=RejectPhase;
@@ -1491,6 +1500,10 @@ void __fastcall TMainForm::LoadOpt(void)
     DCBFile            =ini->ReadString ("opt","dcbfile",       "");
     BLQFile            =ini->ReadString ("opt","blqfile",       "");
     GoogleEarthFile    =ini->ReadString ("opt","googleearthfile",GOOGLE_EARTH);
+    NlosOnnxEnabled    =ini->ReadInteger("opt","nlos_onnx_enabled",0);
+    NlosOnnxModel      =ini->ReadString ("opt","nlos_onnx_model","");
+    NlosDeweightGain   =ini->ReadFloat  ("opt","nlos_deweight_gain",1.0);
+    NlosArThreshold    =ini->ReadFloat  ("opt","nlos_ar_threshold",0.8);
     
     RovList="";
     for (int i=0;i<10;i++) {
@@ -1732,6 +1745,10 @@ void __fastcall TMainForm::SaveOpt(void)
     ini->WriteString ("opt","dcbfile",     DCBFile     );
     ini->WriteString ("opt","blqfile",     BLQFile     );
     ini->WriteString ("opt","googleearthfile",GoogleEarthFile);
+    ini->WriteInteger("opt","nlos_onnx_enabled",NlosOnnxEnabled);
+    ini->WriteString ("opt","nlos_onnx_model",NlosOnnxModel);
+    ini->WriteFloat  ("opt","nlos_deweight_gain",NlosDeweightGain);
+    ini->WriteFloat  ("opt","nlos_ar_threshold",NlosArThreshold);
     
     for (p=RovList.c_str();*p;p++) {
         if ((p=strstr(p,"\r\n"))) strncpy(p,"@@",2); else break;

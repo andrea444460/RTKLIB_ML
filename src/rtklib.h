@@ -158,6 +158,11 @@ extern "C" {
 #endif
 #define NFREQGLO    2                   /* number of carrier frequencies of GLONASS */
 
+/* NLOS ML residual standard deviation history length */
+#ifndef NLOS_HIST_LEN
+#define NLOS_HIST_LEN 10
+#endif
+
 #ifndef NEXOBS
 #define NEXOBS      0                   /* number of extended obs codes */
 #endif
@@ -1088,6 +1093,10 @@ typedef struct {        /* processing options type */
     double odisp[2][2][11][3]; // Ocean tide loading parameters {rov,base}{amp,phase}
     int  freqopt;       /* disable L2-AR */
     char pppopt[256];   /* ppp option */
+    int  nlos_onnx_enabled;              /* enable NLOS ML inference via ONNX Runtime */
+    char nlos_onnx_model[MAXSTRPATH];    /* ONNX model file path */
+    double nlos_deweight_gain;           /* de-weight gain: 0=off, 1=default, >1 stronger */
+    double nlos_ar_threshold;            /* AR gate threshold on P(NLOS) (0..1) */
 } prcopt_t;
 
 typedef struct {        /* solution options type */
@@ -1182,6 +1191,8 @@ typedef struct {        /* satellite status type */
     uint8_t vsat[NFREQ]; /* valid satellite flag */
     float snr_rover [NFREQ]; /* rover signal strength (dBHz) */
     float snr_base  [NFREQ]; /* base signal strength (dBHz) */
+    float snr_old   [NFREQ]; /* rover SNR from previous epoch (dBHz) */
+    uint8_t nlos_ar [NFREQ];  /* gate integer ambiguity resolution (phase only) */
     uint8_t fix [NFREQ]; /* ambiguity fix flag (1:float,2:fix,3:hold) */
     int code[NFREQ][2];  // Current code per frequency index for the base and rover.
     uint8_t slip[NFREQ]; /* cycle-slip flag */
@@ -1190,6 +1201,20 @@ typedef struct {        /* satellite status type */
     uint32_t outc [NFREQ]; /* obs outage counter of phase */
     uint32_t slipc[NFREQ]; /* cycle-slip counter */
     uint32_t rejc [NFREQ]; /* reject counter */
+
+    /* NLOS residual history for residual standard deviation features (m) */
+    float resp_hist[NFREQ][NLOS_HIST_LEN]; /* code residual ring buffer */
+    double resp_sum[NFREQ]; /* code residual sum */
+    double resp_sumsq[NFREQ]; /* code residual sum of squares */
+    uint8_t resp_hist_pos[NFREQ]; /* next write position */
+    uint8_t resp_hist_count[NFREQ]; /* number of samples in ring (<=NLOS_HIST_LEN) */
+
+    float resc_hist[NFREQ][NLOS_HIST_LEN]; /* phase residual ring buffer */
+    double resc_sum[NFREQ]; /* phase residual sum */
+    double resc_sumsq[NFREQ]; /* phase residual sum of squares */
+    uint8_t resc_hist_pos[NFREQ]; /* next write position */
+    uint8_t resc_hist_count[NFREQ]; /* number of samples in ring (<=NLOS_HIST_LEN) */
+
     double gf[NFREQ-1]; /* geometry-free phase (m) */
     double mw[NFREQ-1]; /* MW-LC (m) */
     double phw;         /* phase windup (cycle) */

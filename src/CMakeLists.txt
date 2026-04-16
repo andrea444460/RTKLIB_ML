@@ -42,6 +42,27 @@ list(APPEND DIR_SRCS ${DIR_SRCS_RTKLIB} ${DIR_SRCS_RTKLIB_RCV})
 add_library(rtklib SHARED ${DIR_SRCS} rtklib.h)
 set_property(TARGET rtklib PROPERTY C_STANDARD 99)
 
+# Optional ONNX Runtime linkage for NLOS ML
+option(NLOS_ONNX "Enable ONNX Runtime inference for NLOS ML" OFF)
+set(ONNXRUNTIME_INCLUDE_DIR "" CACHE PATH "Directory containing onnxruntime_c_api.h")
+set(ONNXRUNTIME_LIBRARY "" CACHE FILEPATH "ONNX Runtime library (onnxruntime.lib or libonnxruntime.so)")
+
+if(NLOS_ONNX)
+  if(ONNXRUNTIME_INCLUDE_DIR)
+    target_include_directories(rtklib PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
+  else()
+    message(WARNING "NLOS_ONNX enabled but ONNXRUNTIME_INCLUDE_DIR is empty")
+  endif()
+
+  if(ONNXRUNTIME_LIBRARY)
+    target_link_libraries(rtklib ${ONNXRUNTIME_LIBRARY})
+  else()
+    message(WARNING "NLOS_ONNX enabled but ONNXRUNTIME_LIBRARY is empty")
+  endif()
+
+  target_compile_definitions(rtklib PUBLIC NLOS_ONNX_RUNTIME)
+endif()
+
 
 target_include_directories(rtklib
     PUBLIC ${PROJECT_SOURCE_DIR}/include

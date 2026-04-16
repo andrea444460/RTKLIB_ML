@@ -186,6 +186,10 @@ EXPORT opt_t sysopts[]={
     {"misc-rnxopt1",    2,  (void *)prcopt_.rnxopt[0],   ""     },
     {"misc-rnxopt2",    2,  (void *)prcopt_.rnxopt[1],   ""     },
     {"misc-pppopt",     2,  (void *)prcopt_.pppopt,      ""     },
+    {"misc-nlos_onnx_enabled", 3, (void *)&prcopt_.nlos_onnx_enabled, SWTOPT},
+    {"misc-nlos_onnx_model",   2, (void *)prcopt_.nlos_onnx_model,    ""    },
+    {"misc-nlos_deweight_gain",1, (void *)&prcopt_.nlos_deweight_gain, ""    },
+    {"misc-nlos_ar_threshold", 1, (void *)&prcopt_.nlos_ar_threshold,  ""    },
     
     {"file-satantfile", 2,  (void *)&filopt_.satantp,    ""     },
     {"file-rcvantfile", 2,  (void *)&filopt_.rcvantp,    ""     },
@@ -523,6 +527,11 @@ extern void resetsysopts(void)
     trace(3,"resetsysopts:\n");
     
     prcopt_=prcopt_default;
+    /* NLOS ONNX defaults */
+    prcopt_.nlos_onnx_enabled = 0;
+    prcopt_.nlos_onnx_model[0] = '\0';
+    prcopt_.nlos_deweight_gain = 1.0;
+    prcopt_.nlos_ar_threshold = 0.8;
     solopt_=solopt_default;
     filopt_.satantp[0]='\0';
     filopt_.rcvantp[0]='\0';
