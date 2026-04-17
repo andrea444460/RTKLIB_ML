@@ -1323,6 +1323,8 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
     double bl,dr[3],posu[3],posr[3],didxi=0.0,didxj=0.0,*im;
     double *tropr,*tropu,*dtdxr,*dtdxu,*Ri,*Rj,freqi,freqj,*Hi=NULL,df;
     int i,j,k,m,f,nv=0,nb[NFREQ*NSYS*2+2]={0},b=0,sysi,sysj,nf=NF(opt);
+    int i_ref_any, i_ref_noslip, i_ref_los;
+    int pivot_total = 0, pivot_los_selected = 0, pivot_fallback_noslip = 0, pivot_fallback_any = 0;
     int frq,code;
 
     trace(3,"ddres   : dt=%.4f ns=%d\n",dt,ns);
@@ -1358,16 +1360,65 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
         for (f=opt->mode>PMODE_DGPS?0:nf;f<nf*2;f++) {
             frq=f%nf;code=f<nf?0:1;
 
-            /* find reference satellite with highest elevation, set to i */
-            for (i=-1,j=0;j<ns;j++) {
+            /* find reference satellite:
+             * 1) prefer non-slip sats
+             * 2) within that set, prefer LOS-like sats (P_nlos <= threshold)
+             * 3) fallback to highest elevation as before
+             */
+            i_ref_any = -1;
+            i_ref_noslip = -1;
+            i_ref_los = -1;
+            for (j=0;j<ns;j++) {
                 sysi=rtk->ssat[sat[j]-1].sys;
                 if (!test_sys(sysi,m) || sysi==SYS_SBS) continue;
                 if (!validobs(iu[j],ir[j],f,nf,y)) continue;
-                /* skip sat with slip unless no other valid sat */
-                if (i>=0&&rtk->ssat[sat[j]-1].slip[frq]&LLI_SLIP) continue;
-                if (i<0||azel[1+iu[j]*2]>=azel[1+iu[i]*2]) i=j;
+
+                if (i_ref_any<0||azel[1+iu[j]*2]>=azel[1+iu[i_ref_any]*2]) {
+                    i_ref_any=j;
+                }
+                if (!(rtk->ssat[sat[j]-1].slip[frq]&LLI_SLIP) &&
+                    (i_ref_noslip<0||azel[1+iu[j]*2]>=azel[1+iu[i_ref_noslip]*2])) {
+                    i_ref_noslip=j;
+                }
             }
+            i = i_ref_noslip >= 0 ? i_ref_noslip : i_ref_any;
             if (i<0) continue;
+            pivot_total++;
+
+            /* NLOS-aware refinement of pivot choice in selected pool */
+            for (j=0;j<ns;j++) {
+                nlos_features_t fref;
+                const double snr_ref = rtk->ssat[sat[j]-1].snr_rover[frq];
+                const int rs_ref = nlos_receiver_state(&obs[iu[j]]);
+                double pref;
+
+                sysi=rtk->ssat[sat[j]-1].sys;
+                if (!test_sys(sysi,m) || sysi==SYS_SBS) continue;
+                if (!validobs(iu[j],ir[j],f,nf,y)) continue;
+                if (i_ref_noslip >= 0 && (rtk->ssat[sat[j]-1].slip[frq]&LLI_SLIP)) continue;
+
+                fref.sat_no = sat[j];
+                fref.freq_idx = frq;
+                fref.epoch = rtk->epoch;
+                fref.snr_dbhz = snr_ref;
+                fref.receiver_state = rs_ref;
+                pref = getNlosProbability(&fref);
+
+                if (pref <= nlos_ar_threshold &&
+                    (i_ref_los<0||azel[1+iu[j]*2]>=azel[1+iu[i_ref_los]*2])) {
+                    i_ref_los = j;
+                }
+            }
+            if (i_ref_los >= 0) {
+                i = i_ref_los;
+                pivot_los_selected++;
+            }
+            else if (i_ref_noslip >= 0) {
+                pivot_fallback_noslip++;
+            }
+            else {
+                pivot_fallback_any++;
+            }
 
             /* calculate double differences of residuals (code/phase) for each sat */
             for (j=0;j<ns;j++) {
@@ -1615,6 +1666,13 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
         char tstr[64];
         const char dir = rtk->tt < 0.0 ? 'B' : 'F';
         time2str(rtk->sol.time, tstr, 3);
+        if (pivot_total > 0) {
+            const double pivot_los_ratio = (double)pivot_los_selected / (double)pivot_total;
+            trace(1,
+                  "NLOS-ONNX pivotstat: epoch=%d dir=%c time=%s total=%d los_sel=%d fallback_noslip=%d fallback_any=%d los_ratio=%.3f\n",
+                  rtk->epoch, dir, tstr, pivot_total, pivot_los_selected,
+                  pivot_fallback_noslip, pivot_fallback_any, pivot_los_ratio);
+        }
         for (i = 0; i < MAXSAT; ++i) {
             if (!nlos_epoch_seen[i]) continue;
             trace(1, "NLOS-ONNX epochsat: epoch=%d dir=%c time=%s sat=%d P=%.6f\n",
