@@ -15,6 +15,9 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import os
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
@@ -32,6 +35,13 @@ class TrackPoint:
     ns: Optional[int] = None # Numero di satelliti
     nlos_count: Optional[int] = None
     csv_total_sat: Optional[int] = None
+@dataclass
+class NlosCsvInfo:
+    counts_by_time: dict[float, tuple[int, int]]
+    min_time_s: Optional[float]
+    max_time_s: Optional[float]
+
+
 
 
 GPST_UTC_LEAP_DATES = [
@@ -200,7 +210,42 @@ def count_to_palette_index(count: Optional[int], thresholds: list[int]) -> int:
     return idx
 
 
-def load_nlos_counts_csv(csv_path: Path, nlos_threshold: float, time_bin_s: float) -> dict[float, tuple[int, int]]:
+def parse_kml_color_list(text: str) -> list[str]:
+    """Parsa una lista di colori KML AABBGGRR separati da virgola."""
+    colors: list[str] = []
+    for raw in text.split(","):
+        color = raw.strip().lower()
+        if len(color) == 8:
+            colors.append(color)
+    return colors
+
+
+def parse_track_modes(text: str, n_tracks: int, default_mode: str) -> list[str]:
+    """
+    Parsea la lista di modalità per traccia.
+    Esempio: "solid,nlos_count" -> traccia 1 solid, traccia 2 nlos_count.
+    Se la lista è più corta del numero tracce, replica l'ultima modalità valida.
+    """
+    allowed = {"fix", "nlos_count", "solid"}
+    if n_tracks <= 0:
+        return []
+    if not text.strip():
+        return [default_mode] * n_tracks
+
+    raw_modes = [m.strip().lower() for m in text.split(",") if m.strip()]
+    modes: list[str] = []
+    for m in raw_modes:
+        if m in allowed:
+            modes.append(m)
+
+    if not modes:
+        return [default_mode] * n_tracks
+    if len(modes) < n_tracks:
+        modes.extend([modes[-1]] * (n_tracks - len(modes)))
+    return modes[:n_tracks]
+
+
+def load_nlos_counts_csv(csv_path: Path, nlos_threshold: float, time_bin_s: float) -> NlosCsvInfo:
     """
     Legge il CSV generato da plot_nlos_trace.py e restituisce:
       tempo_relativo_bin -> (numero satelliti NLOS, numero satelliti totali)
@@ -266,32 +311,45 @@ def load_nlos_counts_csv(csv_path: Path, nlos_threshold: float, time_bin_s: floa
         if p_nlos >= nlos_threshold:
             nlos_grouped.setdefault(t_val, set()).add(sat_key)
 
-    return {
+    counts_by_time = {
         k: (len(nlos_grouped.get(k, set())), len(total_sats))
         for k, total_sats in total_grouped.items()
     }
+    keys = sorted(counts_by_time.keys())
+    return NlosCsvInfo(
+        counts_by_time=counts_by_time,
+        min_time_s=keys[0] if keys else None,
+        max_time_s=keys[-1] if keys else None,
+    )
 
 
-def attach_nlos_counts(points: list[TrackPoint], nlos_counts: dict[float, tuple[int, int]], time_bin_s: float) -> None:
+def attach_nlos_counts(points: list[TrackPoint], nlos_counts: dict[float, tuple[int, int]], time_bin_s: float) -> tuple[int, int, Optional[float], Optional[float]]:
     """Associa a ciascun TrackPoint il conteggio NLOS più vicino nel tempo relativo."""
     if not points or not nlos_counts:
-        return
+        return 0, len(points), None, None
 
     parsed_times = [parse_iso_utc(p.time_utc) for p in points]
     valid_times = [t for t in parsed_times if t is not None]
     if not valid_times:
-        return
+        return 0, len(points), None, None
 
     t0 = valid_times[0]
+    matched = 0
+    rel_times: list[float] = []
     for p, t in zip(points, parsed_times):
         if t is None:
             continue
         rel_s = (t - t0).total_seconds()
+        rel_times.append(rel_s)
         key = round(rel_s / time_bin_s) * time_bin_s if time_bin_s > 0 else rel_s
         counts = nlos_counts.get(key)
         if counts is None:
             continue
         p.nlos_count, p.csv_total_sat = counts
+        matched += 1
+    pos_min_time = min(rel_times) if rel_times else None
+    pos_max_time = max(rel_times) if rel_times else None
+    return matched, len(points), pos_min_time, pos_max_time
 
 
 def build_gpx_tree(tracks_data: list[tuple[str, list[TrackPoint]]]) -> ET.ElementTree:
@@ -324,6 +382,8 @@ def build_kml_tree(
     alt_mode: str = "clampToGround",
     color_mode: str = "fix",
     nlos_bins: int = 6,
+    solid_colors: Optional[list[str]] = None,
+    track_modes: Optional[list[str]] = None,
 ) -> ET.ElementTree:
     """Costruisce la struttura KML disegnando segmenti colorati per fix o conteggio NLOS."""
     ET.register_namespace("", "http://www.opengis.net/kml/2.2")
@@ -348,14 +408,26 @@ def build_kml_tree(
         "ff8800cc",  # viola/rosso
         "ff666666",  # fallback
     ]
+    solid_palette = solid_colors or [
+        "ffffaa00",  # azzurro/ciano
+        "ff0000ff",  # rosso
+        "ff00ff00",  # verde
+        "ff00ffff",  # giallo
+        "ffff00ff",  # magenta
+        "ffff8800",  # blu
+    ]
 
     all_nlos_counts = [
         p.nlos_count for _, pts in tracks_data for p in pts if p.nlos_count is not None
     ]
     nlos_thresholds = compute_threshold_bins(all_nlos_counts, max(2, nlos_bins))
+    effective_track_modes = track_modes or [color_mode] * len(tracks_data)
+    need_nlos_mode = any(m == "nlos_count" for m in effective_track_modes)
+    need_solid_mode = any(m == "solid" for m in effective_track_modes)
+    need_fix_mode = any(m == "fix" for m in effective_track_modes)
 
     styles: dict[object, tuple[str, str, str]] = {}
-    if color_mode == "nlos_count":
+    if need_nlos_mode:
         if not nlos_thresholds:
             styles["none"] = ("nlos_none_style", "ffaaaaaa", "NLOS count unavailable")
         else:
@@ -368,8 +440,16 @@ def build_kml_tree(
                     nxt = nlos_thresholds[i + 1]
                     name = f"NLOS {thr}-{max(thr, nxt - 1)}"
                 styles[i] = (style_id, color, name)
-    else:
-        styles = fix_styles.copy()
+    if need_solid_mode:
+        for i, (track_name, _) in enumerate(tracks_data):
+            if effective_track_modes[i] != "solid":
+                continue
+            style_id = f"solid_track_{i + 1}"
+            color = solid_palette[i % len(solid_palette)]
+            styles[f"track_{i + 1}"] = (style_id, color, f"Track {track_name}")
+    if need_fix_mode:
+        for k, v in fix_styles.items():
+            styles[k] = v
 
     for _, (style_id, color, name) in styles.items():
         style = ET.SubElement(document, "Style", attrib={"id": style_id})
@@ -377,12 +457,14 @@ def build_kml_tree(
         ET.SubElement(line_style, "color").text = color
         ET.SubElement(line_style, "width").text = "5"
 
-    def get_style_id(p: TrackPoint) -> str:
-        if color_mode == "nlos_count":
+    def get_style_id(p: TrackPoint, track_idx: int, mode: str) -> str:
+        if mode == "nlos_count":
             if not nlos_thresholds or p.nlos_count is None:
                 return "nlos_none_style"
             idx = count_to_palette_index(p.nlos_count, nlos_thresholds)
             return f"nlos_count_{idx}"
+        if mode == "solid":
+            return f"solid_track_{track_idx + 1}"
         if p.q == 1:
             return "fix_style"
         if p.q == 2:
@@ -393,21 +475,24 @@ def build_kml_tree(
             return "single_style"
         return "unknown_style"
 
-    def segment_value(p: TrackPoint) -> object:
-        if color_mode == "nlos_count":
+    def segment_value(p: TrackPoint, track_idx: int, mode: str) -> object:
+        if mode == "nlos_count":
             if p.nlos_count is None or not nlos_thresholds:
                 return "none"
             return count_to_palette_index(p.nlos_count, nlos_thresholds)
+        if mode == "solid":
+            return f"track_{track_idx}"
         return p.q
 
-    for track_name, points in tracks_data:
+    for track_idx, (track_name, points) in enumerate(tracks_data):
+        track_mode = effective_track_modes[track_idx] if track_idx < len(effective_track_modes) else color_mode
         folder = ET.SubElement(document, "Folder")
         ET.SubElement(folder, "name").text = track_name
 
         if not points:
             continue
 
-        current_value = segment_value(points[0])
+        current_value = segment_value(points[0], track_idx, track_mode)
         segment_points = [points[0]]
         segment_count = 1
 
@@ -416,7 +501,7 @@ def build_kml_tree(
                 return
 
             pm = ET.SubElement(folder, "Placemark")
-            if color_mode == "nlos_count":
+            if track_mode == "nlos_count":
                 sample_count = pts[-1].nlos_count
                 label = f"NLOS count {sample_count}" if sample_count is not None else "NLOS unavailable"
                 total_sat = pts[-1].csv_total_sat
@@ -437,11 +522,15 @@ def build_kml_tree(
                     desc_parts.append(f"LOS: {los_pct:.1f}%")
                 desc = "<br/>".join(desc_parts)
             else:
-                q_val = pts[-1].q
-                q_label = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}.get(q_val, "Sconosciuto") if q_val else "N/A"
-                desc = f"Qualità: {q_label} (Q={q_val})<br/>Punti nel segmento: {len(pts)}"
-                ET.SubElement(pm, "name").text = f"Segmento {seg_num} ({q_label})"
-            ET.SubElement(pm, "styleUrl").text = f"#{get_style_id(pts[-1])}"
+                if track_mode == "solid":
+                    desc = f"Traccia: {track_name}<br/>Punti nel segmento: {len(pts)}"
+                    ET.SubElement(pm, "name").text = f"Segmento {seg_num} ({track_name})"
+                else:
+                    q_val = pts[-1].q
+                    q_label = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}.get(q_val, "Sconosciuto") if q_val else "N/A"
+                    desc = f"Qualità: {q_label} (Q={q_val})<br/>Punti nel segmento: {len(pts)}"
+                    ET.SubElement(pm, "name").text = f"Segmento {seg_num} ({q_label})"
+            ET.SubElement(pm, "styleUrl").text = f"#{get_style_id(pts[-1], track_idx, track_mode)}"
             ET.SubElement(pm, "description").text = desc
 
             linestring = ET.SubElement(pm, "LineString")
@@ -453,12 +542,12 @@ def build_kml_tree(
 
         for i in range(1, len(points)):
             p = points[i]
-            if segment_value(p) == current_value:
+            if segment_value(p, track_idx, track_mode) == current_value:
                 segment_points.append(p)
             else:
                 add_segment(segment_points, current_value, segment_count)
                 segment_count += 1
-                current_value = segment_value(p)
+                current_value = segment_value(p, track_idx, track_mode)
                 segment_points = [points[i-1], p]
 
         add_segment(segment_points, current_value, segment_count)
@@ -473,6 +562,20 @@ def save_kmz(kml_tree: ET.ElementTree, output_path: Path):
     kml_bytes = ET.tostring(kml_tree.getroot(), encoding="utf-8", xml_declaration=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("doc.kml", kml_bytes)
+
+
+def open_file(filepath: Path):
+    """Apre un file con l'applicazione predefinita del sistema operativo."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(filepath)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", filepath])
+        else:
+            subprocess.call(["xdg-open", filepath])
+        print(f"[OK] Apertura di {filepath.name} avviata.")
+    except Exception as e:
+        print(f"[ATTENZIONE] Impossibile aprire automaticamente il file: {e}")
 
 
 def main() -> None:
@@ -494,9 +597,21 @@ def main() -> None:
     )
     parser.add_argument(
         "--color-by",
-        choices=["fix", "nlos_count"],
+        choices=["fix", "nlos_count", "solid"],
         default="fix",
         help="Colora la traccia per qualità fix o per conteggio NLOS (default: fix).",
+    )
+    parser.add_argument(
+        "--track-colors",
+        type=str,
+        default="ffffaa00,ff0000ff",
+        help="Colori fissi KML AABBGGRR separati da virgola, usati con --color-by solid.",
+    )
+    parser.add_argument(
+        "--track-modes",
+        type=str,
+        default="",
+        help="Modalità per singola traccia (fix|nlos_count|solid) separate da virgola, es: solid,nlos_count.",
     )
     parser.add_argument(
         "--nlos-csv",
@@ -538,25 +653,62 @@ def main() -> None:
             tracks_data.append((path.stem, points))
             total_points += len(points)
             print(f"[LETTO] {path.name}: trovati {len(points)} punti validi.")
+    track_modes = parse_track_modes(args.track_modes, len(tracks_data), args.color_by)
+    if track_modes:
+        print(f"[MODE] Modalita per traccia: {', '.join(track_modes)}")
 
-    if args.color_by == "nlos_count":
+    if "nlos_count" in track_modes:
         if args.nlos_csv is None:
-            print("\n[ERRORE] Con --color-by nlos_count devi specificare --nlos-csv.")
+            print("\n[ERRORE] Con modalità nlos_count devi specificare --nlos-csv.")
             return
         if not args.nlos_csv.is_file():
             print(f"\n[ERRORE] CSV NLOS non trovato: {args.nlos_csv}")
             return
-        nlos_counts = load_nlos_counts_csv(
+        nlos_info = load_nlos_counts_csv(
             args.nlos_csv,
             nlos_threshold=max(0.0, min(1.0, args.nlos_threshold)),
             time_bin_s=max(0.0, args.nlos_time_bin),
         )
+        nlos_counts = nlos_info.counts_by_time
         if not nlos_counts:
             print(f"\n[ERRORE] Nessun conteggio NLOS valido trovato nel CSV: {args.nlos_csv}")
             return
+        total_matched = 0
+        total_track_points = 0
+        pos_span_min: Optional[float] = None
+        pos_span_max: Optional[float] = None
         for _, points in tracks_data:
-            attach_nlos_counts(points, nlos_counts, time_bin_s=max(0.0, args.nlos_time_bin))
+            matched, total_points_track, track_min, track_max = attach_nlos_counts(
+                points, nlos_counts, time_bin_s=max(0.0, args.nlos_time_bin)
+            )
+            total_matched += matched
+            total_track_points += total_points_track
+            if track_min is not None:
+                pos_span_min = track_min if pos_span_min is None else min(pos_span_min, track_min)
+            if track_max is not None:
+                pos_span_max = track_max if pos_span_max is None else max(pos_span_max, track_max)
         print(f"[NLOS] Conteggi caricati da CSV: {len(nlos_counts)} istanti aggregati.")
+        if nlos_info.min_time_s is not None and nlos_info.max_time_s is not None:
+            print(
+                f"[NLOS] Copertura CSV: {nlos_info.min_time_s:.1f}s -> {nlos_info.max_time_s:.1f}s "
+                f"(span {nlos_info.max_time_s - nlos_info.min_time_s:.1f}s)"
+            )
+        if pos_span_min is not None and pos_span_max is not None:
+            print(
+                f"[NLOS] Copertura POS: {pos_span_min:.1f}s -> {pos_span_max:.1f}s "
+                f"(span {pos_span_max - pos_span_min:.1f}s)"
+            )
+        if total_track_points > 0:
+            match_pct = 100.0 * total_matched / total_track_points
+            print(
+                f"[NLOS] Match temporali POS<-CSV: {total_matched}/{total_track_points} punti "
+                f"({match_pct:.1f}%)"
+            )
+            if match_pct < 95.0:
+                print(
+                    "[NLOS][WARN] Il CSV copre solo una parte del percorso o non e' ben allineato nel tempo; "
+                    "i tratti senza match verranno colorati in grigio."
+                )
 
     if not tracks_data:
         print("\n[ERRORE] Nessun dato estratto.")
@@ -577,9 +729,12 @@ def main() -> None:
             alt_mode=args.alt_mode,
             color_mode=args.color_by,
             nlos_bins=max(2, args.nlos_bins),
+            solid_colors=parse_kml_color_list(args.track_colors),
+            track_modes=track_modes,
         )
         save_kmz(kml_tree, kmz_path)
         print(f"[OK] Salvato KMZ: {kmz_path.absolute()}")
+        open_file(kmz_path)
 
     if args.format in ["gpx", "both"]:
         gpx_path = output_base.with_suffix(".gpx")
