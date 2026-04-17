@@ -117,6 +117,7 @@ __fastcall TMainForm::TMainForm(TComponent* Owner)
     
     DynamicModel=IonoOpt=TropOpt=RovAntPcv=RefAntPcv=AmbRes=0;
     NlosOnnxEnabled=0;
+    NlosPivotSelect=1;
     NlosDeweightGain=1.0;
     NlosArThreshold=0.8;
     RovPosType=RefPosType=0;
@@ -1043,6 +1044,7 @@ int __fastcall TMainForm::GetOption(prcopt_t &prcopt, solopt_t &solopt,
     prcopt.thresslip=SlipThres;
     prcopt.thresdop=DopThres;
     prcopt.nlos_onnx_enabled=NlosOnnxEnabled;
+    prcopt.nlos_pivot_select=NlosPivotSelect;
     strncpy(prcopt.nlos_onnx_model,NlosOnnxModel.c_str(),MAXSTRPATH-1);
     prcopt.nlos_onnx_model[MAXSTRPATH-1]='\0';
     prcopt.nlos_deweight_gain=NlosDeweightGain;
@@ -1501,6 +1503,7 @@ void __fastcall TMainForm::LoadOpt(void)
     BLQFile            =ini->ReadString ("opt","blqfile",       "");
     GoogleEarthFile    =ini->ReadString ("opt","googleearthfile",GOOGLE_EARTH);
     NlosOnnxEnabled    =ini->ReadInteger("opt","nlos_onnx_enabled",0);
+    NlosPivotSelect    =ini->ReadInteger("opt","nlos_pivot_select",1);
     NlosOnnxModel      =ini->ReadString ("opt","nlos_onnx_model","");
     NlosDeweightGain   =ini->ReadFloat  ("opt","nlos_deweight_gain",1.0);
     NlosArThreshold    =ini->ReadFloat  ("opt","nlos_ar_threshold",0.8);
@@ -1746,6 +1749,7 @@ void __fastcall TMainForm::SaveOpt(void)
     ini->WriteString ("opt","blqfile",     BLQFile     );
     ini->WriteString ("opt","googleearthfile",GoogleEarthFile);
     ini->WriteInteger("opt","nlos_onnx_enabled",NlosOnnxEnabled);
+    ini->WriteInteger("opt","nlos_pivot_select",NlosPivotSelect);
     ini->WriteString ("opt","nlos_onnx_model",NlosOnnxModel);
     ini->WriteFloat  ("opt","nlos_deweight_gain",NlosDeweightGain);
     ini->WriteFloat  ("opt","nlos_ar_threshold",NlosArThreshold);

@@ -212,6 +212,7 @@ __published:
 	TLabel *Label23;
 	TEdit *PPPOpts;
     TCheckBox *NlosOnnxEnable;
+    TCheckBox *NlosPivotSelect;
     TEdit *NlosOnnxModel;
     TButton *BtnNlosOnnxModel;
     TLabel *LabelNlosDeweightGain;

@@ -1094,6 +1094,7 @@ typedef struct {        /* processing options type */
     int  freqopt;       /* disable L2-AR */
     char pppopt[256];   /* ppp option */
     int  nlos_onnx_enabled;              /* enable NLOS ML inference via ONNX Runtime */
+    int  nlos_pivot_select;              /* enable NLOS-aware pivot selection for DD */
     char nlos_onnx_model[MAXSTRPATH];    /* ONNX model file path */
     double nlos_deweight_gain;           /* de-weight gain: 0=off, 1=default, >1 stronger */
     double nlos_ar_threshold;            /* AR gate threshold on P(NLOS) (0..1) */

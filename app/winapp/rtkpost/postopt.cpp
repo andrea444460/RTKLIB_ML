@@ -466,6 +466,7 @@ void __fastcall TOptDialog::GetOpt(void)
 	RnxOpts2	 ->Text			=MainForm->RnxOpts2;
 	PPPOpts		 ->Text			=MainForm->PPPOpts;
 	NlosOnnxEnable->Checked		=MainForm->NlosOnnxEnabled;
+    NlosPivotSelect->Checked   =MainForm->NlosPivotSelect;
 	NlosOnnxModel ->Text			=MainForm->NlosOnnxModel;
 	NlosDeweightGain->Text       =s.sprintf("%.3f",MainForm->NlosDeweightGain);
 	NlosArThreshold ->Text       =s.sprintf("%.3f",MainForm->NlosArThreshold);
@@ -604,6 +605,7 @@ void __fastcall TOptDialog::SetOpt(void)
 	MainForm->RnxOpts2	  =RnxOpts2		->Text;
 	MainForm->PPPOpts	  =PPPOpts		->Text;
 	MainForm->NlosOnnxEnabled=NlosOnnxEnable->Checked?1:0;
+    MainForm->NlosPivotSelect=NlosPivotSelect->Checked?1:0;
 	MainForm->NlosOnnxModel =NlosOnnxModel->Text;
 	MainForm->NlosDeweightGain=str2dbl(NlosDeweightGain->Text);
 	MainForm->NlosArThreshold =str2dbl(NlosArThreshold->Text);
@@ -760,7 +762,9 @@ void __fastcall TOptDialog::LoadOpt(AnsiString file)
 	RnxOpts2	 ->Text			=prcopt.rnxopt[1];
 	PPPOpts		 ->Text			=prcopt.pppopt;
 	NlosOnnxEnable->Checked		=prcopt.nlos_onnx_enabled?true:false;
+    NlosPivotSelect->Checked   =prcopt.nlos_pivot_select?true:false;
 	NlosOnnxModel ->Text			=prcopt.nlos_onnx_model;
+    MainForm->NlosPivotSelect  =prcopt.nlos_pivot_select;
 	MainForm->NlosDeweightGain	=prcopt.nlos_deweight_gain;
 	MainForm->NlosArThreshold	=prcopt.nlos_ar_threshold;
 	NlosDeweightGain->Text       =s.sprintf("%.3f",prcopt.nlos_deweight_gain);
@@ -938,6 +942,7 @@ int ppp=PosMode->ItemIndex>=PMODE_PPP_KINEMA;
 	strcpy(prcopt.rnxopt[1],RnxOpts2_Text.c_str());
 	strcpy(prcopt.pppopt,PPPOpts_Text.c_str());
 	prcopt.nlos_onnx_enabled=NlosOnnxEnable->Checked?1:0;
+    prcopt.nlos_pivot_select=NlosPivotSelect->Checked?1:0;
 	AnsiString NlosOnnxModel_Text=NlosOnnxModel->Text;
 	strncpy(prcopt.nlos_onnx_model,NlosOnnxModel_Text.c_str(),MAXSTRPATH-1);
 	prcopt.nlos_onnx_model[MAXSTRPATH-1]='\0';
@@ -1053,6 +1058,7 @@ void __fastcall TOptDialog::UpdateEnable(void)
 	BtnRefPos      ->Enabled=RefPosType->Enabled&&RefPosType->ItemIndex<=2;
 	NlosOnnxModel  ->Enabled=NlosOnnxEnable->Checked;
 	BtnNlosOnnxModel->Enabled=NlosOnnxEnable->Checked;
+    NlosPivotSelect->Enabled=NlosOnnxEnable->Checked;
 	NlosDeweightGain->Enabled=NlosOnnxEnable->Checked;
 	NlosArThreshold->Enabled=NlosOnnxEnable->Checked;
 	LabelNlosDeweightGain->Enabled=NlosOnnxEnable->Checked;

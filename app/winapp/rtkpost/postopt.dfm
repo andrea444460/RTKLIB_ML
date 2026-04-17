@@ -2144,12 +2144,23 @@ object OptDialog: TOptDialog
         TabOrder = 9
         OnClick = FreqChange
       end
+      object NlosPivotSelect: TCheckBox
+        Left = 164
+        Top = 243
+        Width = 151
+        Height = 17
+        Caption = 'Pivot Selection LOS/NLOS'
+        Checked = True
+        State = cbChecked
+        TabOrder = 10
+        OnClick = FreqChange
+      end
       object NlosOnnxModel: TEdit
         Left = 38
         Top = 262
         Width = 340
         Height = 21
-        TabOrder = 10
+        TabOrder = 11
       end
       object BtnNlosOnnxModel: TButton
         Left = 379
@@ -2163,7 +2174,7 @@ object OptDialog: TOptDialog
         Font.Name = 'Tahoma'
         Font.Style = []
         ParentFont = False
-        TabOrder = 11
+        TabOrder = 12
         OnClick = BtnNlosOnnxModelClick
       end
       object LabelNlosDeweightGain: TLabel
@@ -2178,7 +2189,7 @@ object OptDialog: TOptDialog
         Top = 288
         Width = 60
         Height = 21
-        TabOrder = 12
+        TabOrder = 13
         Text = '1.0'
       end
       object LabelNlosArThreshold: TLabel
@@ -2193,7 +2204,7 @@ object OptDialog: TOptDialog
         Top = 311
         Width = 60
         Height = 21
-        TabOrder = 13
+        TabOrder = 14
         Text = '0.8'
       end
     end

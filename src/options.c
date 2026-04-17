@@ -187,6 +187,7 @@ EXPORT opt_t sysopts[]={
     {"misc-rnxopt2",    2,  (void *)prcopt_.rnxopt[1],   ""     },
     {"misc-pppopt",     2,  (void *)prcopt_.pppopt,      ""     },
     {"misc-nlos_onnx_enabled", 3, (void *)&prcopt_.nlos_onnx_enabled, SWTOPT},
+    {"misc-nlos_pivot_select", 3, (void *)&prcopt_.nlos_pivot_select, SWTOPT},
     {"misc-nlos_onnx_model",   2, (void *)prcopt_.nlos_onnx_model,    ""    },
     {"misc-nlos_deweight_gain",1, (void *)&prcopt_.nlos_deweight_gain, ""    },
     {"misc-nlos_ar_threshold", 1, (void *)&prcopt_.nlos_ar_threshold,  ""    },
@@ -529,6 +530,7 @@ extern void resetsysopts(void)
     prcopt_=prcopt_default;
     /* NLOS ONNX defaults */
     prcopt_.nlos_onnx_enabled = 0;
+    prcopt_.nlos_pivot_select = 1;
     prcopt_.nlos_onnx_model[0] = '\0';
     prcopt_.nlos_deweight_gain = 1.0;
     prcopt_.nlos_ar_threshold = 0.8;

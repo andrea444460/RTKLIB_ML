@@ -223,6 +223,7 @@ public:
 	int SbasCorr,SbasCorr1,SbasCorr2,SbasCorr3,SbasCorr4,TimeDecimal;
 	int SolStatic,SbasSat,MapFunc;
 	int NlosOnnxEnabled;
+    int NlosPivotSelect;
 	int PosOpt[6];
 	double ElMask,MaxAgeDiff,VarHoldAmb,GainHoldAmb,RejectCode,RejectPhase;
 	double NlosDeweightGain;

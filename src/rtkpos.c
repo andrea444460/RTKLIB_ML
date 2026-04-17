@@ -1314,6 +1314,7 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
                  int ns, double *v, double *H, double *R, int *vflg)
 {
     prcopt_t *opt=&rtk->opt;
+    const int nlos_pivot_select = opt->nlos_pivot_select ? 1 : 0;
     const double nlos_gain = opt->nlos_deweight_gain < 0.0 ? 0.0 : opt->nlos_deweight_gain;
     const double nlos_ar_threshold =
         opt->nlos_ar_threshold < 0.0 ? 0.0 :
@@ -1385,39 +1386,41 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
             if (i<0) continue;
             pivot_total++;
 
-            /* NLOS-aware refinement of pivot choice in selected pool */
-            for (j=0;j<ns;j++) {
-                nlos_features_t fref;
-                const double snr_ref = rtk->ssat[sat[j]-1].snr_rover[frq];
-                const int rs_ref = nlos_receiver_state(&obs[iu[j]]);
-                double pref;
+            if (nlos_pivot_select) {
+                /* NLOS-aware refinement of pivot choice in selected pool */
+                for (j=0;j<ns;j++) {
+                    nlos_features_t fref;
+                    const double snr_ref = rtk->ssat[sat[j]-1].snr_rover[frq];
+                    const int rs_ref = nlos_receiver_state(&obs[iu[j]]);
+                    double pref;
 
-                sysi=rtk->ssat[sat[j]-1].sys;
-                if (!test_sys(sysi,m) || sysi==SYS_SBS) continue;
-                if (!validobs(iu[j],ir[j],f,nf,y)) continue;
-                if (i_ref_noslip >= 0 && (rtk->ssat[sat[j]-1].slip[frq]&LLI_SLIP)) continue;
+                    sysi=rtk->ssat[sat[j]-1].sys;
+                    if (!test_sys(sysi,m) || sysi==SYS_SBS) continue;
+                    if (!validobs(iu[j],ir[j],f,nf,y)) continue;
+                    if (i_ref_noslip >= 0 && (rtk->ssat[sat[j]-1].slip[frq]&LLI_SLIP)) continue;
 
-                fref.sat_no = sat[j];
-                fref.freq_idx = frq;
-                fref.epoch = rtk->epoch;
-                fref.snr_dbhz = snr_ref;
-                fref.receiver_state = rs_ref;
-                pref = getNlosProbability(&fref);
+                    fref.sat_no = sat[j];
+                    fref.freq_idx = frq;
+                    fref.epoch = rtk->epoch;
+                    fref.snr_dbhz = snr_ref;
+                    fref.receiver_state = rs_ref;
+                    pref = getNlosProbability(&fref);
 
-                if (pref <= nlos_ar_threshold &&
-                    (i_ref_los<0||azel[1+iu[j]*2]>=azel[1+iu[i_ref_los]*2])) {
-                    i_ref_los = j;
+                    if (pref <= nlos_ar_threshold &&
+                        (i_ref_los<0||azel[1+iu[j]*2]>=azel[1+iu[i_ref_los]*2])) {
+                        i_ref_los = j;
+                    }
                 }
-            }
-            if (i_ref_los >= 0) {
-                i = i_ref_los;
-                pivot_los_selected++;
-            }
-            else if (i_ref_noslip >= 0) {
-                pivot_fallback_noslip++;
-            }
-            else {
-                pivot_fallback_any++;
+                if (i_ref_los >= 0) {
+                    i = i_ref_los;
+                    pivot_los_selected++;
+                }
+                else if (i_ref_noslip >= 0) {
+                    pivot_fallback_noslip++;
+                }
+                else {
+                    pivot_fallback_any++;
+                }
             }
 
             /* calculate double differences of residuals (code/phase) for each sat */
@@ -1666,7 +1669,7 @@ static int ddres(rtk_t *rtk, const obsd_t *obs, double dt, const double *x,
         char tstr[64];
         const char dir = rtk->tt < 0.0 ? 'B' : 'F';
         time2str(rtk->sol.time, tstr, 3);
-        if (pivot_total > 0) {
+        if (nlos_pivot_select && pivot_total > 0) {
             const double pivot_los_ratio = (double)pivot_los_selected / (double)pivot_total;
             trace(1,
                   "NLOS-ONNX pivotstat: epoch=%d dir=%c time=%s total=%d los_sel=%d fallback_noslip=%d fallback_any=%d los_ratio=%.3f\n",
