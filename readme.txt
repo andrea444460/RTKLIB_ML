@@ -21,6 +21,11 @@ The integration supports:
 This extension is intended for experimental/research usage and should be validated
 carefully on each dataset and receiver setup.
 
+How to cite:
+
+If you use this ONNX NLOS/LOS integration in your work, please cite:
+Maffia, A. (2026). Improving navigation robustness in urban environments via adaptive machine learning-based error mitigation. Proceedings of ENC 2026.
+
    
 WINDOWS: To build and install code for with Windows Embarcadero compiler:
 
