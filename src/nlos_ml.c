@@ -42,6 +42,14 @@ static nlos_tracker_t trackers[MAXSAT][NFREQ];
 static int cache_epoch = -1;
 static uint8_t cache_valid[MAXSAT][NFREQ];
 static double cache_pnlos[MAXSAT][NFREQ];
+static uint32_t prof_calls = 0;
+static uint32_t prof_cache_hits = 0;
+static uint32_t prof_cache_misses = 0;
+static uint32_t prof_onnx_runs = 0;
+static uint32_t prof_call_ms_sum = 0;
+static uint32_t prof_cache_hit_ms_sum = 0;
+static uint32_t prof_cache_miss_ms_sum = 0;
+static uint32_t prof_run_ms_sum = 0;
 
 static const OrtApi *ort_api = NULL;
 static OrtEnv *ort_env = NULL;
@@ -53,6 +61,38 @@ static char ort_input_name[64] = {0};
 static char ort_output_name[64] = {0};
 static int ort_refcount = 0;
 static int ort_seq_len = 1;
+
+static void nlos_prof_reset(void)
+{
+    prof_calls = 0;
+    prof_cache_hits = 0;
+    prof_cache_misses = 0;
+    prof_onnx_runs = 0;
+    prof_call_ms_sum = 0;
+    prof_cache_hit_ms_sum = 0;
+    prof_cache_miss_ms_sum = 0;
+    prof_run_ms_sum = 0;
+}
+
+static void nlos_prof_log(const char *tag, int level)
+{
+    const double avg_call_us =
+        prof_calls ? (1000.0 * (double)prof_call_ms_sum) / (double)prof_calls : 0.0;
+    const double avg_hit_us =
+        prof_cache_hits ? (1000.0 * (double)prof_cache_hit_ms_sum) / (double)prof_cache_hits : 0.0;
+    const double avg_miss_us =
+        prof_cache_misses ? (1000.0 * (double)prof_cache_miss_ms_sum) / (double)prof_cache_misses : 0.0;
+    const double avg_run_us =
+        prof_onnx_runs ? (1000.0 * (double)prof_run_ms_sum) / (double)prof_onnx_runs : 0.0;
+    const double run_share =
+        prof_call_ms_sum > 0 ? (double)prof_run_ms_sum / (double)prof_call_ms_sum : 0.0;
+
+    trace(level,
+          "NLOS-ONNX prof[%s]: calls=%u hits=%u misses=%u runs=%u avg_call_us=%.1f "
+          "avg_hit_us=%.1f avg_miss_us=%.1f avg_run_us=%.1f run_share=%.3f\n",
+          tag ? tag : "-", prof_calls, prof_cache_hits, prof_cache_misses, prof_onnx_runs,
+          avg_call_us, avg_hit_us, avg_miss_us, avg_run_us, run_share);
+}
 
 static int ort_check(OrtStatus *status)
 {
@@ -76,6 +116,7 @@ static void reset_trackers(void)
     }
     memset(cache_valid, 0, sizeof(cache_valid));
     cache_epoch = -1;
+    nlos_prof_reset();
 }
 
 static float tracker_max_snr(const nlos_tracker_t *tr)
@@ -290,6 +331,7 @@ void nlos_ml_onnx_shutdown(void)
     if (ort_refcount <= 0) return;
     ort_refcount--;
     if (ort_refcount != 0) return;
+    nlos_prof_log("shutdown", 1);
 
     if (ort_api) {
         if (ort_session) {
@@ -327,6 +369,7 @@ double getNlosProbability(const nlos_features_t *features)
     static int warned_inactive = 0;
     static int warned_bad_seq = 0;
     static int warned_no_input = 0;
+    uint32_t t_call0, t_run0;
     int sat_idx, freq_idx, receiver_state;
     nlos_tracker_t *tr;
     int seq_len;
@@ -340,6 +383,7 @@ double getNlosProbability(const nlos_features_t *features)
     OrtValue *output_tensors[1] = {NULL};
 
     if (!features) return 0.0;
+    t_call0 = tickget();
     if (!logged_build_stamp) {
         trace(1, "NLOS-ONNX build: %s\n", NLOS_ML_BUILD_STAMP);
         logged_build_stamp = 1;
@@ -367,6 +411,12 @@ double getNlosProbability(const nlos_features_t *features)
         cache_epoch = features->epoch;
     }
     if (cache_valid[sat_idx][freq_idx]) {
+        const uint32_t dt_ms = tickget() - t_call0;
+        prof_calls++;
+        prof_cache_hits++;
+        prof_call_ms_sum += dt_ms;
+        prof_cache_hit_ms_sum += dt_ms;
+        if ((prof_calls % 1000U) == 0U) nlos_prof_log("periodic", 1);
         trace(2, "NLOS-ONNX cache: sat=%d f=%d P_nlos=%.6f\n",
               features->sat_no, features->freq_idx + 1, cache_pnlos[sat_idx][freq_idx]);
         return cache_pnlos[sat_idx][freq_idx];
@@ -423,6 +473,7 @@ double getNlosProbability(const nlos_features_t *features)
 
     input_tensors[0] = input_tensor;
 
+    t_run0 = tickget();
     st = ort_api->Run(ort_session,
                       NULL /* run options */,
                       input_names,
@@ -431,6 +482,10 @@ double getNlosProbability(const nlos_features_t *features)
                       output_names,
                       1,
                       output_tensors);
+    {
+        const uint32_t dt_run_ms = tickget() - t_run0;
+        prof_run_ms_sum += dt_run_ms;
+    }
     if (!ort_check(st) || !output_tensors[0]) {
         ort_api->ReleaseValue(input_tensor);
         return 0.0;
@@ -465,6 +520,15 @@ double getNlosProbability(const nlos_features_t *features)
         pnlos = (double)(1.0f - p); /* Model predicts P(LOS); return P(NLOS). */
         trace(2, "NLOS-ONNX out: sat=%d f=%d P_los=%.6f P_nlos=%.6f\n",
               features->sat_no, features->freq_idx + 1, (double)p, pnlos);
+        {
+            const uint32_t dt_ms = tickget() - t_call0;
+            prof_calls++;
+            prof_cache_misses++;
+            prof_onnx_runs++;
+            prof_call_ms_sum += dt_ms;
+            prof_cache_miss_ms_sum += dt_ms;
+            if ((prof_calls % 1000U) == 0U) nlos_prof_log("periodic", 1);
+        }
         cache_pnlos[sat_idx][freq_idx] = pnlos;
         cache_valid[sat_idx][freq_idx] = 1;
         return pnlos;

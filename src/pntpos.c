@@ -25,6 +25,7 @@
 *                           add output of velocity estimation error in estvel()
 *-----------------------------------------------------------------------------*/
 #include "rtklib.h"
+#include "nlos_ml.h"
 
 /* constants/macros ----------------------------------------------------------*/
 
@@ -46,6 +47,20 @@
 #define REL_HUMI    0.7         /* relative humidity for Saastamoinen model */
 #define MIN_EL      (5.0*D2R)   /* min elevation for measurement error (rad) */
 # define MAX_GDOP   30          /* max gdop for valid solution  */
+#define NLOS_VAR_EPS 1e-6       /* epsilon for NLOS variance scaling */
+
+/* receiver-state feature used by NLOS model ----------------------------------*/
+static int nlos_receiver_state(const obsd_t *obs)
+{
+    const int m_phase_l1 = (obs->L[0] == 0.0);
+    const int m_code_l2  = (obs->P[1] == 0.0);
+    const int m_phase_l2 = (obs->L[1] == 0.0);
+    const int raw_malus = m_phase_l1 + m_code_l2 + m_phase_l2;
+    int receiver_state = 7 - raw_malus;
+    if (receiver_state < 0) receiver_state = 0;
+    if (receiver_state > 7) receiver_state = 7;
+    return receiver_state;
+}
 
 /* pseudorange measurement error variance ------------------------------------*/
 static double varerr(const prcopt_t *opt, const obsd_t *obs, double el, int sys)
@@ -289,6 +304,13 @@ static int rescode(int iter, const obsd_t *obs, int n, const double *rs,
 {
     gtime_t time;
     double r,freq,dion=0.0,dtrp=0.0,vmeas,vion=0.0,vtrp=0.0,rr[3],pos[3],dtr,e[3],P;
+    const int nlos_enabled = opt->nlos_onnx_enabled ? 1 : 0;
+    const double nlos_gain = opt->nlos_deweight_gain < 0.0 ? 0.0 : opt->nlos_deweight_gain;
+    const double nlos_hard_threshold =
+        opt->nlos_ar_threshold < 0.0 ? 0.0 :
+        (opt->nlos_ar_threshold > 1.0 ? 1.0 : opt->nlos_ar_threshold);
+    int nlos_week = 0;
+    const int nlos_epoch = (int)(time2gpst(obs[0].time, &nlos_week) + 0.5) + nlos_week * 604800;
     int i,j,nv=0,sat,sys,mask[NX-3]={0};
 
     for (i=0;i<3;i++) rr[i]=x[i];
@@ -316,6 +338,25 @@ static int rescode(int iter, const obsd_t *obs, int n, const double *rs,
         /* geometric distance and elevation mask*/
         if ((r=geodist(rs+i*6,rr,e))<=0.0) continue;
         if (satazel(pos,e,azel+i*2)<opt->elmin) continue;
+
+        /* optional NLOS hard exclusion in single-point mode */
+        {
+            double pnlos = 0.0;
+            if (nlos_enabled) {
+                nlos_features_t f_nlos;
+                f_nlos.sat_no = sat;
+                f_nlos.freq_idx = 0;
+                f_nlos.epoch = nlos_epoch;
+                f_nlos.snr_dbhz = obs[i].SNR[0];
+                f_nlos.receiver_state = nlos_receiver_state(&obs[i]);
+                pnlos = getNlosProbability(&f_nlos);
+                if (pnlos > nlos_hard_threshold) {
+                    trace(2, "NLOS-SPP reject: sat=%d P=%.6f thr=%.6f\n",
+                          sat, pnlos, nlos_hard_threshold);
+                    continue;
+                }
+            }
+        }
         
         if (iter>0) {
             /* test SNR mask */
@@ -361,7 +402,23 @@ static int rescode(int iter, const obsd_t *obs, int n, const double *rs,
         
         /* variance of pseudorange error */
         var[nv]=vare[i]+vmeas+vion+vtrp;
-        var[nv++]+=varerr(opt,&obs[i],azel[1+i*2],sys);
+        var[nv]+=varerr(opt,&obs[i],azel[1+i*2],sys);
+        if (nlos_enabled && nlos_gain > 0.0) {
+            nlos_features_t f_nlos;
+            double scale;
+            double pnlos;
+            f_nlos.sat_no = sat;
+            f_nlos.freq_idx = 0;
+            f_nlos.epoch = nlos_epoch;
+            f_nlos.snr_dbhz = obs[i].SNR[0];
+            f_nlos.receiver_state = nlos_receiver_state(&obs[i]);
+            pnlos = getNlosProbability(&f_nlos);
+            scale = pow(1.0 - pnlos + NLOS_VAR_EPS, nlos_gain);
+            var[nv] /= scale;
+            trace(2, "NLOS-SPP scale: sat=%d gain=%.3f P=%.6f scale=%.6f\n",
+                  sat, nlos_gain, pnlos, 1.0 / scale);
+        }
+        nv++;
         trace(4,"sat=%2d azel=%5.1f %4.1f res=%7.3f sig=%5.3f\n",obs[i].sat,
               azel[i*2]*R2D,azel[1+i*2]*R2D,resp[i],sqrt(var[nv-1]));
     }

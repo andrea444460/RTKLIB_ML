@@ -637,6 +637,11 @@ def main() -> None:
         default=6,
         help="Numero massimo di classi colore discrete per il conteggio NLOS (default: 6).",
     )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Non aprire automaticamente il KMZ al termine.",
+    )
     args = parser.parse_args()
 
     input_paths: list[Path] = args.input_pos
@@ -734,7 +739,8 @@ def main() -> None:
         )
         save_kmz(kml_tree, kmz_path)
         print(f"[OK] Salvato KMZ: {kmz_path.absolute()}")
-        open_file(kmz_path)
+        if not args.no_open:
+            open_file(kmz_path)
 
     if args.format in ["gpx", "both"]:
         gpx_path = output_base.with_suffix(".gpx")

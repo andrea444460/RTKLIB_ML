@@ -6,6 +6,21 @@ Tutorials for this code, and sample GPS data sets are available at http://rtkexp
 
 The latest version of the user manual is at: https://rtkexplorer.com/pdfs/manual_demo5.pdf
 
+ONNX NLOS/LOS INTEGRATION (custom extension):
+
+This repository includes a custom ONNX Runtime integration for GNSS signal classification.
+An ONNX model is used to estimate LOS/NLOS probability from receiver-side features
+(e.g., SNR and receiver state), and this probability is then used inside RTKLIB processing.
+
+The integration supports:
+ - NLOS-aware observation de-weighting
+ - NLOS-based gating and filtering logic in RTK/PPK processing
+ - Optional NLOS-aware behavior in single-point positioning workflows
+ - Trace logging and external Python tooling for diagnostics and visualization
+
+This extension is intended for experimental/research usage and should be validated
+carefully on each dataset and receiver setup.
+
    
 WINDOWS: To build and install code for with Windows Embarcadero compiler:
 
